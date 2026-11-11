@@ -1,6 +1,6 @@
 # Codex CLI 正式版邮件提醒
 
-GitHub Actions 每小时检查 openai/codex 的 Releases，分页读取、过滤草稿和预发布，并校验正式版标签。QQ 邮箱只负责接收，无需 QQ 密码或授权码。
+GitHub Actions 每小时检查 openai/codex 的 Releases，通过 GraphQL 分页读取通知需要的字段（不下载附件详情）、过滤草稿和预发布，并校验正式版标签。使用工作流自动提供的 GitHub token，无需额外配置。QQ 邮箱只负责接收，无需 QQ 密码或授权码。
 
 ## 配置
 

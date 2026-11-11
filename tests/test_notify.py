@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 import notify
 import io
+import json
 from urllib.error import HTTPError
 
 
@@ -13,6 +14,39 @@ def release(number, tag='rust-v1.2.3', **extra):
 
 
 class NotificationTests(unittest.TestCase):
+    def graphql_page(self, number, more=False, cursor=None, prerelease=False):
+        return {'data': {'repository': {'releases': {
+            'nodes': [dict(databaseId=number, tagName='rust-v1.2.3', isDraft=False,
+                           isPrerelease=prerelease, publishedAt='2026-01-01T00:00:00Z',
+                           url='https://github.com/openai/codex/releases', description='Notes')],
+            'pageInfo': {'hasNextPage': more, 'endCursor': cursor}}}}}
+
+    @patch.dict(notify.os.environ, {'GH_TOKEN': 'test-token'})
+    def test_graphql_pagination_and_filtering(self):
+        with patch.object(notify, 'read_page', side_effect=[
+                self.graphql_page(1, True, 'next', prerelease=True),
+                self.graphql_page(2)]) as read:
+            result = notify.fetch_releases()
+        self.assertEqual([r['id'] for r in result], [2])
+        self.assertEqual(result[0]['body'], 'Notes')
+        requests = [json.loads(call.args[0].data) for call in read.call_args_list]
+        self.assertIsNone(requests[0]['variables']['cursor'])
+        self.assertEqual(requests[1]['variables']['cursor'], 'next')
+
+    @patch.dict(notify.os.environ, {'GH_TOKEN': 'test-token'})
+    def test_graphql_partial_errors_abort(self):
+        response = self.graphql_page(1)
+        response['errors'] = [{'message': 'Partial failure'}]
+        with patch.object(notify, 'read_page', return_value=response):
+            with self.assertRaises(ValueError):
+                notify.fetch_releases()
+
+    @patch.dict(notify.os.environ, {'GH_TOKEN': 'test-token'})
+    def test_graphql_repeated_cursor_aborts(self):
+        with patch.object(notify, 'read_page', return_value=self.graphql_page(1, True, 'same')):
+            with self.assertRaises(ValueError):
+                notify.fetch_releases()
+
     def test_read_retries_gateway_timeout(self):
         error = HTTPError('https://api.github.com', 504, 'Timeout', {}, None)
         with patch.object(notify.urllib.request, 'urlopen',

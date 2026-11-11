@@ -12,7 +12,17 @@ from datetime import datetime, timezone
 from email.message import EmailMessage
 from pathlib import Path
 
-API = 'https://api.github.com/repos/openai/codex/releases'
+API = 'https://api.github.com/graphql'
+RELEASE_QUERY = '''
+query($cursor: String) {
+  repository(owner: "openai", name: "codex") {
+    releases(first: 100, after: $cursor) {
+      nodes { databaseId tagName isDraft isPrerelease publishedAt url description }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+'''
 STATE = Path(os.environ.get('STATE_FILE', 'state/releases.json'))
 
 
@@ -37,17 +47,27 @@ def stable(release):
 
 def fetch_releases():
     releases = []
-    for page in range(1, 1001):
-        headers = {'Accept': 'application/vnd.github+json', 'User-Agent': 'codex-release-notifier'}
-        if os.environ.get('GH_TOKEN'):
-            headers['Authorization'] = 'Bearer ' + os.environ['GH_TOKEN']
-        request = urllib.request.Request(f'{API}?per_page=100&page={page}', headers=headers)
-        batch = read_page(request)
-        if not isinstance(batch, list):
-            raise ValueError('Unexpected GitHub response')
+    cursor = None
+    cursors = set()
+    headers = {'Content-Type': 'application/json', 'User-Agent': 'codex-release-notifier',
+               'Authorization': 'Bearer ' + os.environ['GH_TOKEN']}
+    for _ in range(1000):
+        request = urllib.request.Request(API, headers=headers, data=json.dumps({
+            'query': RELEASE_QUERY, 'variables': {'cursor': cursor}}).encode('utf-8'))
+        result = read_page(request)
+        if result.get('errors'):
+            raise ValueError('GitHub GraphQL returned errors; state not advanced')
+        connection = result['data']['repository']['releases']
+        batch = [dict(id=r['databaseId'], tag_name=r['tagName'], draft=r['isDraft'],
+                      prerelease=r['isPrerelease'], published_at=r['publishedAt'],
+                      html_url=r['url'], body=r['description']) for r in connection['nodes']]
         releases.extend(r for r in batch if stable(r))
-        if len(batch) < 100:
+        if not connection['pageInfo']['hasNextPage']:
             return releases
+        cursor = connection['pageInfo']['endCursor']
+        if not cursor or cursor in cursors:
+            raise ValueError('Invalid GitHub pagination cursor; state not advanced')
+        cursors.add(cursor)
     raise RuntimeError('Pagination limit reached; state not advanced')
 
 
