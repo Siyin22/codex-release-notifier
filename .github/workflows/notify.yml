@@ -3,6 +3,11 @@ on:
   schedule:
     - cron: '23 * * * *'
   workflow_dispatch:
+    inputs:
+      test_email:
+        description: 'Send one test email without checking releases'
+        type: boolean
+        default: false
 permissions:
   contents: write
 concurrency:
@@ -20,8 +25,14 @@ jobs:
         with:
           python-version: '3.12'
       - name: Check releases and send email
-        run: python notify.py
+        run: |
+          if [ "$TEST_EMAIL" = "true" ]; then
+            python notify.py --test-email
+          else
+            python notify.py
+          fi
         env:
+          TEST_EMAIL: ${{ inputs.test_email }}
           GH_TOKEN: ${{ github.token }}
           SMTP_HOST: ${{ vars.SMTP_HOST || 'smtp.163.com' }}
           SMTP_PORT: ${{ vars.SMTP_PORT || '465' }}
@@ -29,6 +40,7 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
       - name: Persist notification history
+        if: ${{ !inputs.test_email }}
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'

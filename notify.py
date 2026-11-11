@@ -1,4 +1,5 @@
 """Notify by SMTP about stable Codex releases. Standard library only."""
+import argparse
 import json
 import os
 import re
@@ -78,17 +79,22 @@ def pending(releases, state):
 
 
 def send(releases):
+    subject = 'Codex CLI 正式版更新：' + ', '.join(r['tag_name'] for r in releases)
+    parts = ['发现新的 Codex CLI 正式版：\n']
+    for release in releases:
+        parts.append(f"{release['tag_name']}\n发布时间：{release['published_at']}\n"
+                     f"{release['html_url']}\n\n{(release.get('body') or '')[:12000]}\n")
+    send_message(subject, '\n'.join(parts))
+
+
+def send_message(subject, body):
     sender = os.environ['SMTP_USER']
     recipient = os.environ['MAIL_TO']
     message = EmailMessage()
     message['From'] = sender
     message['To'] = recipient
-    message['Subject'] = 'Codex CLI 正式版更新：' + ', '.join(r['tag_name'] for r in releases)
-    parts = ['发现新的 Codex CLI 正式版：\n']
-    for release in releases:
-        parts.append(f"{release['tag_name']}\n发布时间：{release['published_at']}\n"
-                     f"{release['html_url']}\n\n{(release.get('body') or '')[:12000]}\n")
-    message.set_content('\n'.join(parts))
+    message['Subject'] = subject
+    message.set_content(body)
     with smtplib.SMTP_SSL(os.environ.get('SMTP_HOST', 'smtp.163.com'),
                           int(os.environ.get('SMTP_PORT', '465')),
                           timeout=30, context=ssl.create_default_context()) as smtp:
@@ -126,4 +132,13 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--test-email', action='store_true', help='Send one test email without changing release history')
+    args = parser.parse_args()
+    if args.test_email:
+        send_message('Codex CLI 更新提醒：测试邮件',
+                     '这是一封测试邮件。收到它表示 Codex CLI 正式版更新提醒的邮件通道已打通。\n'
+                     '后续发现新正式版时会自动通知；本次测试不会修改版本记录。\n')
+        print('SMTP accepted test email.')
+    else:
+        main()
