@@ -5,6 +5,8 @@ import re
 import smtplib
 import ssl
 import tempfile
+import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from email.message import EmailMessage
@@ -12,6 +14,20 @@ from pathlib import Path
 
 API = 'https://api.github.com/repos/openai/codex/releases'
 STATE = Path(os.environ.get('STATE_FILE', 'state/releases.json'))
+
+
+def read_page(request):
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return json.load(response)
+        except urllib.error.HTTPError as error:
+            if error.code not in (500, 502, 503, 504) or attempt == 3:
+                raise
+        except (urllib.error.URLError, TimeoutError):
+            if attempt == 3:
+                raise
+        time.sleep(2 ** attempt)
 
 
 def stable(release):
@@ -26,8 +42,7 @@ def fetch_releases():
         if os.environ.get('GH_TOKEN'):
             headers['Authorization'] = 'Bearer ' + os.environ['GH_TOKEN']
         request = urllib.request.Request(f'{API}?per_page=100&page={page}', headers=headers)
-        with urllib.request.urlopen(request, timeout=30) as response:
-            batch = json.load(response)
+        batch = read_page(request)
         if not isinstance(batch, list):
             raise ValueError('Unexpected GitHub response')
         releases.extend(r for r in batch if stable(r))

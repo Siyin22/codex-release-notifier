@@ -3,6 +3,8 @@ from unittest.mock import patch
 import tempfile
 from pathlib import Path
 import notify
+import io
+from urllib.error import HTTPError
 
 
 def release(number, tag='rust-v1.2.3', **extra):
@@ -11,6 +13,29 @@ def release(number, tag='rust-v1.2.3', **extra):
 
 
 class NotificationTests(unittest.TestCase):
+    def test_read_retries_gateway_timeout(self):
+        error = HTTPError('https://api.github.com', 504, 'Timeout', {}, None)
+        with patch.object(notify.urllib.request, 'urlopen',
+                          side_effect=[error, io.BytesIO(b'[]')]) as read, \
+                patch.object(notify.time, 'sleep'):
+            self.assertEqual(notify.read_page('https://api.github.com'), [])
+            self.assertEqual(read.call_count, 2)
+
+    def test_read_does_not_retry_auth_failure(self):
+        error = HTTPError('https://api.github.com', 401, 'Unauthorized', {}, None)
+        with patch.object(notify.urllib.request, 'urlopen', side_effect=error) as read:
+            with self.assertRaises(HTTPError):
+                notify.read_page('https://api.github.com')
+            self.assertEqual(read.call_count, 1)
+
+    def test_read_retry_limit(self):
+        error = HTTPError('https://api.github.com', 504, 'Timeout', {}, None)
+        with patch.object(notify.urllib.request, 'urlopen', side_effect=error) as read, \
+                patch.object(notify.time, 'sleep'):
+            with self.assertRaises(HTTPError):
+                notify.read_page('https://api.github.com')
+            self.assertEqual(read.call_count, 4)
+
     def test_filter(self):
         self.assertTrue(notify.stable(release(1)))
         for tag in ['rust-v1.2.3-alpha.1', 'rust-v1.2.3-rc.1', 'other-v1.2.3']:
